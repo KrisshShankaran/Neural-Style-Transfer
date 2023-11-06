@@ -526,7 +526,7 @@ for i in range(len(feature_layers) - 1):
 loss = loss + total_variation_weight * total_variation_loss(combination_image)
 
 # get the gradients of the generated image wrt the loss
-grads = K.gradients(loss, combination_image)
+grads = tape.gradient(loss, combination_image)
 
 outputs = [loss]
 if type(grads) in {list, tuple}:
