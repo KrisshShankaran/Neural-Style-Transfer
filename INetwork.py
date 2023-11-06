@@ -334,33 +334,33 @@ else:
 ip = Input(tensor=input_tensor, batch_shape=shape)
 
 # build the VGG16 network with our 3 images as input
-x = Convolution2D(64, (3, 3), activation='relu', name='conv1_1', padding='same')(ip)
-x = Convolution2D(64, (3, 3), activation='relu', name='conv1_2', padding='same')(x)
+x = Conv2D(64, (3, 3), activation='relu', name='conv1_1', padding='same')(ip)
+x = Conv2D(64, (3, 3), activation='relu', name='conv1_2', padding='same')(x)
 x = pooling_func(x)
 
-x = Convolution2D(128, (3, 3), activation='relu', name='conv2_1', padding='same')(x)
-x = Convolution2D(128, (3, 3), activation='relu', name='conv2_2', padding='same')(x)
+x = Conv2D(128, (3, 3), activation='relu', name='conv2_1', padding='same')(x)
+x = Conv2D(128, (3, 3), activation='relu', name='conv2_2', padding='same')(x)
 x = pooling_func(x)
 
-x = Convolution2D(256, (3, 3), activation='relu', name='conv3_1', padding='same')(x)
-x = Convolution2D(256, (3, 3), activation='relu', name='conv3_2', padding='same')(x)
-x = Convolution2D(256, (3, 3), activation='relu', name='conv3_3', padding='same')(x)
+x = Conv2D(256, (3, 3), activation='relu', name='conv3_1', padding='same')(x)
+x = Conv2D(256, (3, 3), activation='relu', name='conv3_2', padding='same')(x)
+x = Conv2D(256, (3, 3), activation='relu', name='conv3_3', padding='same')(x)
 if args.model == "vgg19":
-    x = Convolution2D(256, (3, 3), activation='relu', name='conv3_4', padding='same')(x)
+    x = Conv2D(256, (3, 3), activation='relu', name='conv3_4', padding='same')(x)
 x = pooling_func(x)
 
-x = Convolution2D(512, (3, 3), activation='relu', name='conv4_1', padding='same')(x)
-x = Convolution2D(512, (3, 3), activation='relu', name='conv4_2', padding='same')(x)
-x = Convolution2D(512, (3, 3), activation='relu', name='conv4_3', padding='same')(x)
+x = Conv2D(512, (3, 3), activation='relu', name='conv4_1', padding='same')(x)
+x = Conv2D(512, (3, 3), activation='relu', name='conv4_2', padding='same')(x)
+x = Conv2D(512, (3, 3), activation='relu', name='conv4_3', padding='same')(x)
 if args.model == "vgg19":
-    x = Convolution2D(512, (3, 3), activation='relu', name='conv4_4', padding='same')(x)
+    x = Conv2D(512, (3, 3), activation='relu', name='conv4_4', padding='same')(x)
 x = pooling_func(x)
 
-x = Convolution2D(512, (3, 3), activation='relu', name='conv5_1', padding='same')(x)
-x = Convolution2D(512, (3, 3), activation='relu', name='conv5_2', padding='same')(x)
-x = Convolution2D(512, (3, 3), activation='relu', name='conv5_3', padding='same')(x)
+x = Conv2D(512, (3, 3), activation='relu', name='conv5_1', padding='same')(x)
+x = Conv2D(512, (3, 3), activation='relu', name='conv5_2', padding='same')(x)
+x = Conv2D(512, (3, 3), activation='relu', name='conv5_3', padding='same')(x)
 if args.model == "vgg19":
-    x = Convolution2D(512, (3, 3), activation='relu', name='conv5_4', padding='same')(x)
+    x = Conv2D(512, (3, 3), activation='relu', name='conv5_4', padding='same')(x)
 x = pooling_func(x)
 
 model = Model(ip, x)
