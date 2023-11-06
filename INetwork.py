@@ -13,7 +13,7 @@ import warnings
 from keras.models import Model
 from keras.layers import Input, Conv2D, AveragePooling2D, MaxPooling2D
 from keras import backend as K
-from keras.utils.data_utils import get_file
+from tensorflow.keras.utils import get_file
 from keras.utils.layer_utils import convert_all_kernels_in_model
 
 """
