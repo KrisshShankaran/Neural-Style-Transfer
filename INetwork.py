@@ -296,10 +296,10 @@ def load_mask(mask_path, shape, return_mask_img=False):
     return mask_tensor
 
 
-def pooling_func(x):
-    if pooltype == 1:
+def pooling_func(x, pooltype='max'):
+    if pooltype == 'ave':
         return AveragePooling2D((2, 2), strides=(2, 2))(x)
-    else:
+    else:  # Default to 'max'
         return MaxPooling2D((2, 2), strides=(2, 2))(x)
 
 
@@ -571,26 +571,28 @@ def eval_loss_and_grads(x):
 # requires separate functions for loss and gradients,
 # but computing them separately would be inefficient.
 class Evaluator(object):
-    def __init__(self):
+    def __init__(self, model):
+        self.model = model
         self.loss_value = None
         self.grads_values = None
 
     def loss(self, x):
         assert self.loss_value is None
-        loss_value, grad_values = eval_loss_and_grads(x)
-        self.loss_value = loss_value
-        self.grad_values = grad_values
-        return self.loss_value
+        with tf.GradientTape() as tape:
+            x = tf.convert_to_tensor(x.reshape((1, img_width, img_height, 3)))
+            tape.watch(x)
+            self.loss_value = compute_loss(x, self.model)
+        self.grad_values = tape.gradient(self.loss_value, x)
+        return self.loss_value.numpy().astype('float64')
 
-    def grads(self, x):
+    def grads(self, _):
         assert self.loss_value is not None
-        grad_values = np.copy(self.grad_values)
+        grad_values = self.grad_values.numpy().flatten().astype('float64')
         self.loss_value = None
         self.grad_values = None
         return grad_values
 
-
-evaluator = Evaluator()
+evaluator = Evaluator(model)
 
 # run scipy-based optimization (L-BFGS) over the pixels of the generated image
 # so as to minimize the neural style loss
