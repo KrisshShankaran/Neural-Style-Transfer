@@ -205,7 +205,7 @@ def preprocess_image(image_path, load_dims=False, read_mode="color"):
         else:
             img_height = args.img_size
 
-    img = img.resize((img_width, img_height), Image.LANCZOS).asty  type('float32')
+    img = img.resize((img_width, img_height), Image.LANCZOS).astype('float32')
 
     # RGB -> BGR
     img = img[:, :, ::-1]
