@@ -1,19 +1,17 @@
-from __future__ import print_function
+rom __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-# from scipy.misc import imread, imresize, imsave, fromimage, toimage
-from utils import imread, imresize, imsave, fromimage, toimage
-
-from scipy.optimize import fmin_l_bfgs_b
+# from scipy.misc import imread, imresize, imsave are deprecated. Using imageio and PIL instead.
+from imageio import imread, imsave
+from PIL import Image
 import numpy as np
 import time
 import argparse
 import warnings
 
 from keras.models import Model
-from keras.layers import Input
-from keras.layers.convolutional import Convolution2D, AveragePooling2D, MaxPooling2D
+from keras.layers import Input, Conv2D, AveragePooling2D, MaxPooling2D
 from keras import backend as K
 from keras.utils.data_utils import get_file
 from keras.utils.layer_utils import convert_all_kernels_in_model
@@ -184,7 +182,8 @@ def preprocess_image(image_path, load_dims=False, read_mode="color"):
     global img_width, img_height, img_WIDTH, img_HEIGHT, aspect_ratio
 
     mode = "RGB" if read_mode == "color" else "L"
-    img = imread(image_path, mode=mode)  # Prevents crashes due to PNG images (ARGB)
+    img = Image.open(image_path)
+    img = img.convert('RGB' if read_mode == 'color' else 'L')  # Prevents crashes due to PNG images (ARGB)
 
     if mode == "L":
         # Expand the 1 channel grayscale to 3 channel grayscale image
@@ -206,7 +205,7 @@ def preprocess_image(image_path, load_dims=False, read_mode="color"):
         else:
             img_height = args.img_size
 
-    img = imresize(img, (img_width, img_height)).astype('float32')
+    img = img.resize((img_width, img_height), Image.LANCZOS).asty  pe('float32')
 
     # RGB -> BGR
     img = img[:, :, ::-1]
@@ -243,19 +242,22 @@ def deprocess_image(x):
 
 # util function to preserve image color
 def original_color_transform(content, generated, mask=None):
-    generated = fromimage(toimage(generated, mode='RGB'), mode='YCbCr')  # Convert to YCbCr color space
-
+    # Assuming 'content' and 'generated' are already in the correct format (RGB as numpy arrays)
+    # Convert to YCbCr color space
+    content_ycc = np.array(Image.fromarray(content, 'RGB').convert('YCbCr'))
+    generated_ycc = np.array(Image.fromarray(generated, 'RGB').convert('YCbCr'))
+    
     if mask is None:
-        generated[:, :, 1:] = content[:, :, 1:]  # Generated CbCr = Content CbCr
+        # If there's no mask, just replace the chrominance channels
+        generated_ycc[:, :, 1:] = content_ycc[:, :, 1:]
     else:
-        width, height, channels = generated.shape
+        # If a mask is provided, only replace the chrominance where mask is 1
+        generated_ycc[:, :, 1:] = np.where(mask[:, :, np.newaxis] == 1, content_ycc[:, :, 1:], generated_ycc[:, :, 1:])
+    
+    # Convert back to RGB color space
+    generated = Image.fromarray(generated_ycc, 'YCbCr').convert('RGB')
+    generated = np.array(generated)
 
-        for i in range(width):
-            for j in range(height):
-                if mask[i, j] == 1:
-                    generated[i, j, 1:] = content[i, j, 1:]
-
-    generated = fromimage(toimage(generated, mode='YCbCr'), mode='RGB')  # Convert to RGB color space
     return generated
 
 
@@ -645,8 +647,8 @@ for i in range(num_iter):
     print("Image saved as", fname)
     print("Iteration %d completed in %ds" % (i + 1, end_time - start_time))
 
-    if improvement_threshold is not 0.0:
-        if improvement < improvement_threshold and improvement is not 0.0:
+    if improvement_threshold != 0.0:
+        if improvement < improvement_threshold and improvement !- 0.0:
             print("Improvement (%f) is less than improvement threshold (%f). Early stopping script." %
                   (improvement, improvement_threshold))
             exit()
