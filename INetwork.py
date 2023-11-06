@@ -178,26 +178,23 @@ assert args.content_loss_type in [0, 1, 2], "Content Loss Type must be one of 0,
 
 
 # util function to open, resize and format pictures into appropriate tensors
+from PIL import Image
+import numpy as np
+
 def preprocess_image(image_path, load_dims=False, read_mode="color"):
     global img_width, img_height, img_WIDTH, img_HEIGHT, aspect_ratio
 
-    mode = "RGB" if read_mode == "color" else "L"
+    # Open the image file
     img = Image.open(image_path)
-    img = img.convert('RGB' if read_mode == 'color' else 'L')  # Prevents crashes due to PNG images (ARGB)
-
-    if mode == "L":
-        # Expand the 1 channel grayscale to 3 channel grayscale image
-        temp = np.zeros(img.shape + (3,), dtype=np.uint8)
-        temp[:, :, 0] = img
-        temp[:, :, 1] = img.copy()
-        temp[:, :, 2] = img.copy()
-
-        img = temp
+    if read_mode == "color":
+        img = img.convert("RGB")
+    elif read_mode == "gray":
+        img = img.convert("L")
 
     if load_dims:
-        img_WIDTH = img.shape[0]
-        img_HEIGHT = img.shape[1]
-        aspect_ratio = float(img_HEIGHT) / img_WIDTH
+        # Use the .size attribute to get image dimensions
+        img_WIDTH, img_HEIGHT = img.size
+        aspect_ratio = img_HEIGHT / img_WIDTH
 
         img_width = args.img_size
         if maintain_aspect_ratio:
@@ -205,19 +202,25 @@ def preprocess_image(image_path, load_dims=False, read_mode="color"):
         else:
             img_height = args.img_size
 
-    img = img.resize((img_width, img_height), Image.LANCZOS).astype('float32')
+    # Resize the image as needed
+    img = img.resize((img_width, img_height), Image.LANCZOS)
+    img = np.array(img, dtype='float32')
 
-    # RGB -> BGR
-    img = img[:, :, ::-1]
+    # Convert RGB to BGR
+    if read_mode == "color":
+        img = img[:, :, ::-1]
 
-    img[:, :, 0] -= 103.939
-    img[:, :, 1] -= 116.779
-    img[:, :, 2] -= 123.68
+    # Subtract the mean values per channel
+    img[..., 0] -= 103.939
+    img[..., 1] -= 116.779
+    img[..., 2] -= 123.68
+
+    # Expand dimensions to fit the Keras model input
+    img = np.expand_dims(img, axis=0)
 
     if K.image_data_format() == "channels_first":
-        img = img.transpose((2, 0, 1)).astype('float32')
+        img = np.transpose(img, (0, 3, 1, 2))
 
-    img = np.expand_dims(img, axis=0)
     return img
 
 
