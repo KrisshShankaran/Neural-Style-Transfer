@@ -10,11 +10,11 @@ import time
 import argparse
 import warnings
 
-from keras.models import Model
-from keras.layers import Input, Conv2D, AveragePooling2D, MaxPooling2D
-from keras import backend as K
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Conv2D, AveragePooling2D, MaxPooling2D
+from tensorflow.keras import backend as K
 from tensorflow.keras.utils import get_file
-from keras.utils.layer_utils import convert_all_kernels_in_model
+
 
 """
 Neural Style Transfer with Keras 2.0.5
