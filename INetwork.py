@@ -527,18 +527,18 @@ for i in range(len(feature_layers) - 1):
 loss = loss + total_variation_weight * total_variation_loss(combination_image)
 
 # get the gradients of the generated image wrt the loss
-# Start recording the gradients
-with tf.GradientTape() as tape:
-    # Ensure that 'combination_image' is being watched by the tape
-    # If 'combination_image' is a tf.Variable it's being watched automatically
-    # If it's a tensor, you need to watch it explicitly:
-    if not isinstance(combination_image, tf.Variable):
-        tape.watch(combination_image)
+# First, make sure that the input to the model is a tf.Variable
+# This is necessary for TensorFlow to track changes and compute gradients
+combination_image = tf.Variable(initial_value, dtype=tf.float32)
 
+with tf.GradientTape() as tape:
+    # Now 'combination_image' is a tf.Variable, so it's being watched automatically
+    # The rest of your model code that computes the 'current_loss' goes here
     current_loss = loss  # Here, loss is assumed to be a callable that returns the tensor to compute the gradient towards
 
 # Compute the gradients of 'current_loss' with respect to 'combination_image'
 grads = tape.gradient(current_loss, combination_image)
+
 
 
 outputs = [loss]
