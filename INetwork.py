@@ -103,7 +103,6 @@ parser.add_argument('--preserve_color', dest='color', default="False", type=str,
 parser.add_argument('--min_improvement', default=0.0, type=float,
                     help='Defines minimum improvement required to continue script')
 
-model = VGG16(include_top=False) if args.model == "vgg16" else VGG19(include_top=False)
 
 
 import argparse
@@ -152,6 +151,14 @@ color_mask_present = args.color_mask is not None
 
 # Parse the arguments
 args = parser.parse_args()
+
+class Args:
+    model = 'vgg16'  # or 'vgg19'
+
+args = Args()
+
+# Now you can safely use args to load the model
+model = VGG16(include_top=False) if args.model == "vgg16" else VGG19(include_top=False)
 
 # Convert string arguments to boolean
 rescale_image = str_to_bool(args.rescale_image)
