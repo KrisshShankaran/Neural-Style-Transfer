@@ -2,9 +2,10 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-# from scipy.misc import imread, imresize, imsave are deprecated. Using imageio and PIL instead.
-from imageio import imread, imsave
-from PIL import Image
+from tensorflow.keras.preprocessing.image import save_img
+from tensorflow import io
+from tensorflow import image
+
 import numpy as np
 import tensorflow as tf
 import time
@@ -13,8 +14,14 @@ import warnings
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Conv2D, AveragePooling2D, MaxPooling2D
-from tensorflow.keras import backend as K
+from tensorflow.keras.applications import VGG16, VGG19
 from tensorflow.keras.utils import get_file
+
+from scipy.optimize import fmin_l_bfgs_b
+
+# The following PIL import is fine if you need to use PIL directly
+from PIL import Image
+
 
 
 """
@@ -28,13 +35,6 @@ Contains few improvements suggested in the paper Improving the Neural Algorithm 
 
 -----------------------------------------------------------------------------------------------------------------------
 """
-
-THEANO_WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg16_weights_th_dim_ordering_th_kernels_notop.h5'
-TF_WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5'
-
-TH_19_WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg19_weights_th_dim_ordering_th_kernels_notop.h5'
-TF_19_WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg19_weights_tf_dim_ordering_tf_kernels_notop.h5'
-
 
 parser = argparse.ArgumentParser(description='Neural style transfer with Keras.')
 parser.add_argument('base_image_path', metavar='base', type=str,
@@ -103,354 +103,359 @@ parser.add_argument('--preserve_color', dest='color', default="False", type=str,
 parser.add_argument('--min_improvement', default=0.0, type=float,
                     help='Defines minimum improvement required to continue script')
 
+model = VGG16(include_top=False) if args.model == "vgg16" else VGG19(include_top=False)
+
+
+import argparse
 
 def str_to_bool(v):
     return v.lower() in ("true", "yes", "t", "1")
 
-''' Arguments '''
+# Define the parser and add the arguments
+parser = argparse.ArgumentParser(description='Neural style transfer with Keras.')
+parser.add_argument('base_image_path', metavar='base', type=str,
+                    help='Path to the image to transform.')
+parser.add_argument('style_image_paths', metavar='ref', nargs='+', type=str,
+                    help='Path to the style reference image.')
+parser.add_argument('result_prefix', metavar='res_prefix', type=str,
+                    help='Prefix for the saved results.')
+parser.add_argument("--style_masks", type=str, default=None, nargs='+',
+                    help='Masks for style images')
+parser.add_argument("--content_mask", type=str, default=None,
+                    help='Masks for the content image')
+parser.add_argument("--color_mask", type=str, default=None,
+                    help='Mask for color preservation')
 
+# Parse the arguments
 args = parser.parse_args()
+
+# Process the arguments
 base_image_path = args.base_image_path
-style_reference_image_paths = args.syle_image_paths
+style_reference_image_paths = args.style_image_paths
 result_prefix = args.result_prefix
 
-style_image_paths = []
-for style_image_path in style_reference_image_paths:
-    style_image_paths.append(style_image_path)
+style_image_paths = style_reference_image_paths  # This list is redundant, you can use style_reference_image_paths directly
 
 style_masks_present = args.style_masks is not None
-mask_paths = []
+mask_paths = args.style_masks if style_masks_present else []
 
+# Assert to ensure the correct number of style masks is provided
 if style_masks_present:
-    for mask_path in args.style_masks:
-        mask_paths.append(mask_path)
-
-if style_masks_present:
-    assert len(style_image_paths) == len(mask_paths), "Wrong number of style masks provided.\n" \
-                                                      "Number of style images = %d, \n" \
-                                                      "Number of style mask paths = %d." % \
-                                                      (len(style_image_paths), len(style_masks_present))
+    assert len(style_image_paths) == len(mask_paths), f"Wrong number of style masks provided. " \
+                                                      f"Number of style images = {len(style_image_paths)}, " \
+                                                      f"Number of style mask paths = {len(mask_paths)}."
 
 content_mask_present = args.content_mask is not None
 content_mask_path = args.content_mask
 
-
 color_mask_present = args.color_mask is not None
 
+# Parse the arguments
+args = parser.parse_args()
+
+# Convert string arguments to boolean
 rescale_image = str_to_bool(args.rescale_image)
 maintain_aspect_ratio = str_to_bool(args.maintain_aspect_ratio)
 preserve_color = str_to_bool(args.color)
 
-# these are the weights of the different loss components
+# Assign weights from the arguments
 content_weight = args.content_weight
 total_variation_weight = args.tv_weight
 
-style_weights = []
-
+# Compute style weights
 if len(style_image_paths) != len(args.style_weight):
-    print("Mismatch in number of style images provided and number of style weights provided. \n"
-          "Found %d style images and %d style weights. \n"
-          "Equally distributing weights to all other styles." % (len(style_image_paths), len(args.style_weight)))
+    print("Mismatch in number of style images provided and number of style weights provided. "
+          "Found {} style images and {} style weights. "
+          "Equally distributing weights to all other styles.".format(len(style_image_paths), len(args.style_weight)))
 
     weight_sum = sum(args.style_weight) * args.style_scale
-    count = len(style_image_paths)
-
-    for i in range(len(style_image_paths)):
-        style_weights.append(weight_sum / count)
+    style_weights = [weight_sum / len(style_image_paths)] * len(style_image_paths)
 else:
-    for style_weight in args.style_weight:
-        style_weights.append(style_weight * args.style_scale)
+    style_weights = [style_weight * args.style_scale for style_weight in args.style_weight]
 
 # Decide pooling function
-pooltype = str(args.pool).lower()
-assert pooltype in ["ave", "max"], 'Pooling argument is wrong. Needs to be either "ave" or "max".'
+pool_type = str(args.pool).lower()
+assert pool_type in ["ave", "max"], 'Pooling argument is wrong. Needs to be either "ave" or "max".'
 
-pooltype = 1 if pooltype == "ave" else 0
+# In TensorFlow 2.x, you would typically define a pooling layer in the model itself rather than using a flag
+# However, if you need to decide between using average or max pooling elsewhere in the code:
+use_average_pooling = pool_type == "ave"
 
 read_mode = "gray" if args.init_image == "gray" else "color"
 
-# dimensions of the generated picture.
-img_width = img_height = 0
+# Dimensions of the generated picture will be set later
+img_width = img_height = None
+img_WIDTH = img_HEIGHT = None
+aspect_ratio = None  # This will be calculated based on the image dimensions
 
-img_WIDTH = img_HEIGHT = 0
-aspect_ratio = 0
+assert args.content_loss_type in [0, 1, 2], "Content Loss Type must be one of 0, 1, or 2"
 
-assert args.content_loss_type in [0, 1, 2], "Content Loss Type must be one of 0, 1 or 2"
-
-
-# util function to open, resize and format pictures into appropriate tensors
-from PIL import Image
+# Util function to open, resize, and format pictures into appropriate tensors will go here
+# Ensure you import TensorFlow and related modules if you're working with tensors
 import numpy as np
+from PIL import Image
 
 def preprocess_image(image_path, load_dims=False, read_mode="color"):
     global img_width, img_height, img_WIDTH, img_HEIGHT, aspect_ratio
 
-    # Open the image file
-    img = Image.open(image_path)
-    if read_mode == "color":
-        img = img.convert("RGB")
-    elif read_mode == "gray":
-        img = img.convert("L")
+    # Read the image
+    img = tf.io.read_file(image_path)
+    # Decode the image in the correct color mode
+    img = tf.image.decode_image(img, channels=3 if read_mode == "color" else 1)
+    img = tf.image.convert_image_dtype(img, tf.float32)
 
     if load_dims:
-        # Use the .size attribute to get image dimensions
-        img_WIDTH, img_HEIGHT = img.size
+        # Use tf.shape to get image dimensions
+        img_HEIGHT, img_WIDTH = tf.shape(img)[0], tf.shape(img)[1]
         aspect_ratio = img_HEIGHT / img_WIDTH
 
         img_width = args.img_size
-        if maintain_aspect_ratio:
-            img_height = int(img_width * aspect_ratio)
-        else:
-            img_height = args.img_size
+        img_height = int(img_width * aspect_ratio) if maintain_aspect_ratio else args.img_size
 
-    # Resize the image as needed
-    img = img.resize((img_width, img_height), Image.LANCZOS)
-    img = np.array(img, dtype='float32')
+    # Resize the image as needed using TensorFlow
+    img = tf.image.resize(img, [img_height, img_width], method=tf.image.ResizeMethod.LANCZOS5)
 
-    # Convert RGB to BGR
+    # Convert RGB to BGR for VGG model
     if read_mode == "color":
-        img = img[:, :, ::-1]
+        img = img[..., ::-1]
 
-    # Subtract the mean values per channel
-    img[..., 0] -= 103.939
-    img[..., 1] -= 116.779
-    img[..., 2] -= 123.68
+    # Subtract the mean values per channel (imagenet mean)
+    img -= [103.939, 116.779, 123.68]
 
-    # Expand dimensions to fit the Keras model input
-    img = np.expand_dims(img, axis=0)
+    # Add a batch dimension
+    img = tf.expand_dims(img, axis=0)
 
+    # If using 'channels_first', transpose the image
     if K.image_data_format() == "channels_first":
-        img = np.transpose(img, (0, 3, 1, 2))
+        img = tf.transpose(img, (0, 3, 1, 2))
 
     return img
 
 
-# util function to convert a tensor into a valid image
-def deprocess_image(x):
-    if K.image_data_format() == "channels_first":
-        x = x.reshape((3, img_width, img_height))
-        x = x.transpose((1, 2, 0))
-    else:
-        x = x.reshape((img_width, img_height, 3))
+import tensorflow as tf
 
-    x[:, :, 0] += 103.939
-    x[:, :, 1] += 116.779
-    x[:, :, 2] += 123.68
+def deprocess_image(x):
+    # Check if the data format is 'channels_first' and transpose accordingly
+    if K.image_data_format() == "channels_first":
+        x = tf.transpose(x, (1, 2, 0))
+
+    # Add imagenet mean per channel (this reverses the mean subtraction)
+    mean = [103.939, 116.779, 123.68]
+    if K.image_data_format() == "channels_first":
+        mean = tf.reshape(mean, (1, 1, 1, 3))
+    else:
+        mean = tf.reshape(mean, (1, 1, 3))
+
+    x += mean
 
     # BGR -> RGB
-    x = x[:, :, ::-1]
+    x = x[..., ::-1]
 
-    x = np.clip(x, 0, 255).astype('uint8')
+    # Clip the values to 0-255 and convert to uint8
+    x = tf.clip_by_value(x, 0, 255)
+    x = tf.cast(x, tf.uint8)
+
+    # Remove the batch dimension if there is one
+    if x.shape[0] == 1:
+        x = tf.squeeze(x, axis=0)
+
     return x
-
-
+  
 # util function to preserve image color
+import tensorflow as tf
+
 def original_color_transform(content, generated, mask=None):
-    # Assuming 'content' and 'generated' are already in the correct format (RGB as numpy arrays)
-    # Convert to YCbCr color space
-    content_ycc = np.array(Image.fromarray(content, 'RGB').convert('YCbCr'))
-    generated_ycc = np.array(Image.fromarray(generated, 'RGB').convert('YCbCr'))
-    
+    # Convert images to float32 tensors
+    content = tf.convert_to_tensor(content, dtype=tf.float32)
+    generated = tf.convert_to_tensor(generated, dtype=tf.float32)
+
+    # Normalize the pixel values to [0, 1] (assuming input is uint8)
+    content = content / 255.0
+    generated = generated / 255.0
+
+    # Convert RGB to YCbCr
+    content_ycc = tf.image.rgb_to_yuv(content)
+    generated_ycc = tf.image.rgb_to_yuv(generated)
+
+    # Create mask if not provided
     if mask is None:
-        # If there's no mask, just replace the chrominance channels
-        generated_ycc[:, :, 1:] = content_ycc[:, :, 1:]
-    else:
-        # If a mask is provided, only replace the chrominance where mask is 1
-        generated_ycc[:, :, 1:] = np.where(mask[:, :, np.newaxis] == 1, content_ycc[:, :, 1:], generated_ycc[:, :, 1:])
-    
-    # Convert back to RGB color space
-    generated = Image.fromarray(generated_ycc, 'YCbCr').convert('RGB')
-    generated = np.array(generated)
+        mask = tf.ones_like(content_ycc[:, :, 0])
+
+    # Broadcast the mask to have the same number of channels as the images
+    mask = mask[:, :, tf.newaxis]
+
+    # Replace the chrominance of the generated image with that of the content image
+    generated_ycc = tf.concat([generated_ycc[:, :, 0:1], content_ycc[:, :, 1:] * mask + generated_ycc[:, :, 1:] * (1 - mask)], axis=-1)
+
+    # Convert YCbCr back to RGB
+    generated = tf.image.yuv_to_rgb(generated_ycc)
+
+    # Denormalize the pixel values to [0, 255]
+    generated = tf.clip_by_value(generated * 255.0, 0, 255)
+    generated = tf.cast(generated, tf.uint8)
 
     return generated
 
-
 def load_mask(mask_path, shape, return_mask_img=False):
+    # Read the mask image
+    mask = tf.io.read_file(mask_path)
+    mask = tf.image.decode_image(mask, channels=1)
+    mask = tf.image.convert_image_dtype(mask, tf.float32)
+    
+    # Resize the mask to match the target shape
     if K.image_data_format() == "channels_first":
         _, channels, width, height = shape
+        resize_shape = [width, height]
     else:
         _, width, height, channels = shape
-
-    mask = imread(mask_path, mode="L") # Grayscale mask load
-    mask = imresize(mask, (width, height)).astype('float32')
-
+        resize_shape = [height, width]
+    mask = tf.image.resize(mask, resize_shape)
+    
     # Perform binarization of mask
-    mask[mask <= 127] = 0
-    mask[mask > 128] = 255
+    mask = tf.where(mask <= 0.5, x=0.0, y=1.0)
 
-    max = np.amax(mask)
-    mask /= max
+    if return_mask_img:
+        # Squeeze to remove the channel dimension since the mask is grayscale
+        return tf.squeeze(mask, axis=-1)
 
-    if return_mask_img: return mask
+    # Create a mask tensor with the same shape as the input image
+    mask_tensor = tf.tile(mask, [1, 1, channels])
 
-    mask_shape = shape[1:]
-
-    mask_tensor = np.empty(mask_shape)
-
-    for i in range(channels):
-        if K.image_data_format() == "channels_first":
-            mask_tensor[i, :, :] = mask
-        else:
-            mask_tensor[:, :, i] = mask
+    if K.image_data_format() == "channels_first":
+        mask_tensor = tf.transpose(mask_tensor, perm=[2, 0, 1])
 
     return mask_tensor
 
+from tensorflow.keras.layers import AveragePooling2D, MaxPooling2D
 
-def pooling_func(x, pooltype='max'):
-    if pooltype == 'ave':
-        return AveragePooling2D((2, 2), strides=(2, 2))(x)
-    else:  # Default to 'max'
-        return MaxPooling2D((2, 2), strides=(2, 2))(x)
-
+def pooling_func(x, pool_type='max'):
+    # Define the pool size and strides
+    pool_size = (2, 2)
+    strides = (2, 2)
+    
+    # Apply Average Pooling if specified
+    if pool_type == 'ave':
+        return AveragePooling2D(pool_size, strides=strides)(x)
+    # Apply Max Pooling by default
+    else:
+        return MaxPooling2D(pool_size, strides=strides)(x)
 
 # get tensor representations of our images
-base_image = K.variable(preprocess_image(base_image_path, True, read_mode=read_mode))
+# Process the base image
+base_image = preprocess_image(base_image_path, load_dims=True, read_mode=read_mode)
 
-style_reference_images = []
-for style_path in style_image_paths:
-    style_reference_images.append(K.variable(preprocess_image(style_path)))
+# Process the style reference images
+style_reference_images = [preprocess_image(style_path) for style_path in style_image_paths]
 
-# this will contain our generated image
-if K.image_data_format() == "channels_first":
-    combination_image = K.placeholder((1, 3, img_width, img_height))
-else:
-    combination_image = K.placeholder((1, img_width, img_height, 3))
+# For the generated image, we'll start with a tensor that has the same shape as the base image
+combination_image = tf.Variable(tf.random.uniform(shape=base_image.shape, dtype=tf.float32))
 
-image_tensors = [base_image]
-for style_image_tensor in style_reference_images:
-    image_tensors.append(style_image_tensor)
-image_tensors.append(combination_image)
+# Combine the images into a single tensor
+image_tensors = tf.stack([base_image] + style_reference_images + [combination_image])
 
-nb_tensors = len(image_tensors)
-nb_style_images = nb_tensors - 2 # Content and Output image not considered
+# Create an input layer with the combined images tensor
+input_layer = tf.keras.layers.Input(tensor=image_tensors)
 
-# combine the various images into a single Keras tensor
-input_tensor = K.concatenate(image_tensors, axis=0)
-
-if K.image_data_format() == "channels_first":
-    shape = (nb_tensors, 3, img_width, img_height)
-else:
-    shape = (nb_tensors, img_width, img_height, 3)
-
-ip = Input(tensor=input_tensor, batch_shape=shape)
-
-# build the VGG16 network with our 3 images as input
-x = Conv2D(64, (3, 3), activation='relu', name='conv1_1', padding='same')(ip)
-x = Conv2D(64, (3, 3), activation='relu', name='conv1_2', padding='same')(x)
-x = pooling_func(x)
-
-x = Conv2D(128, (3, 3), activation='relu', name='conv2_1', padding='same')(x)
-x = Conv2D(128, (3, 3), activation='relu', name='conv2_2', padding='same')(x)
-x = pooling_func(x)
-
-x = Conv2D(256, (3, 3), activation='relu', name='conv3_1', padding='same')(x)
-x = Conv2D(256, (3, 3), activation='relu', name='conv3_2', padding='same')(x)
-x = Conv2D(256, (3, 3), activation='relu', name='conv3_3', padding='same')(x)
+# Load the VGG model with the input layer
 if args.model == "vgg19":
-    x = Conv2D(256, (3, 3), activation='relu', name='conv3_4', padding='same')(x)
-x = pooling_func(x)
-
-x = Conv2D(512, (3, 3), activation='relu', name='conv4_1', padding='same')(x)
-x = Conv2D(512, (3, 3), activation='relu', name='conv4_2', padding='same')(x)
-x = Conv2D(512, (3, 3), activation='relu', name='conv4_3', padding='same')(x)
-if args.model == "vgg19":
-    x = Conv2D(512, (3, 3), activation='relu', name='conv4_4', padding='same')(x)
-x = pooling_func(x)
-
-x = Conv2D(512, (3, 3), activation='relu', name='conv5_1', padding='same')(x)
-x = Conv2D(512, (3, 3), activation='relu', name='conv5_2', padding='same')(x)
-x = Conv2D(512, (3, 3), activation='relu', name='conv5_3', padding='same')(x)
-if args.model == "vgg19":
-    x = Conv2D(512, (3, 3), activation='relu', name='conv5_4', padding='same')(x)
-x = pooling_func(x)
-
-model = Model(ip, x)
-
-if K.image_data_format() == "channels_first":
-    if args.model == "vgg19":
-        weights = get_file('vgg19_weights_th_dim_ordering_th_kernels_notop.h5', TH_19_WEIGHTS_PATH_NO_TOP, cache_subdir='models')
-    else:
-        weights = get_file('vgg16_weights_th_dim_ordering_th_kernels_notop.h5', THEANO_WEIGHTS_PATH_NO_TOP, cache_subdir='models')
+    # Load VGG19
+    vgg = VGG19(include_top=False, weights='imagenet', input_tensor=input_layer)
 else:
-    if args.model == "vgg19":
-        weights = get_file('vgg19_weights_tf_dim_ordering_tf_kernels_notop.h5', TF_19_WEIGHTS_PATH_NO_TOP, cache_subdir='models')
-    else:
-        weights = get_file('vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5', TF_WEIGHTS_PATH_NO_TOP, cache_subdir='models')
+    # Load VGG16 by default
+    vgg = VGG16(include_top=False, weights='imagenet', input_tensor=input_layer)
 
-model.load_weights(weights)
+# If you need to access the model's intermediate layers, you can do so as follows:
+# x = vgg.get_layer('block5_conv3').output
+# x = pooling_func(x)
 
-if K.backend() == 'tensorflow' and K.image_data_format() == "channels_first":
-    warnings.warn('You are using the TensorFlow backend, yet you '
-                  'are using the Theano '
-                  'image dimension ordering convention '
-                  '(`image_dim_ordering="th"`). '
-                  'For best performance, set '
-                  '`image_dim_ordering="tf"` in '
-                  'your Keras config '
-                  'at ~/.keras/keras.json.')
-    convert_all_kernels_in_model(model)
+# Create the model
+model = Model(inputs=input_layer, outputs=vgg.output)
 
-print('Model loaded.')
+from tensorflow.keras.applications import VGG16, VGG19
+from tensorflow.keras.models import Model
+import tensorflow as tf
 
-# get the symbolic outputs of each "key" layer (we gave them unique names).
-outputs_dict = dict([(layer.name, layer.output) for layer in model.layers])
-shape_dict = dict([(layer.name, layer.output_shape) for layer in model.layers])
+# Set the correct data format
+tf.keras.backend.set_image_data_format('channels_last')  # or 'channels_first'
+
+# Load the model
+if args.model == "vgg19":
+    # Load pre-trained VGG19 model without the classifier layers
+    model = VGG19(include_top=False, weights='imagenet')
+else:
+    # Load pre-trained VGG16 model without the classifier layers
+    model = VGG16(include_top=False, weights='imagenet')
+
+# Print a message indicating that the model was successfully loaded
+print('Model loaded with pre-trained ImageNet weights.')
+
+layer_output = outputs_dict['layer_name']
+layer_shape = shape_dict['layer_name']
 
 # compute the neural style loss
 # first we need to define 4 util functions
 
 # Improvement 1
 # the gram matrix of an image tensor (feature-wise outer product) using shifted activations
+import tensorflow as tf
+
 def gram_matrix(x):
-    assert K.ndim(x) == 3
-    if K.image_data_format() == "channels_first":
-        features = K.batch_flatten(x)
-    else:
-        features = K.batch_flatten(K.permute_dimensions(x, (2, 0, 1)))
-    gram = K.dot(features - 1, K.transpose(features - 1))
+    assert tf.rank(x) == 3, "Input tensor must be 3-dimensional"
+    # If the input tensor uses 'channels_first', we permute it to 'channels_last' for consistency
+    if tf.keras.backend.image_data_format() == 'channels_first':
+        x = tf.transpose(x, (1, 2, 0))
+    # We make the input tensor 2-dimensional by flattening the height and width dimensions
+    # into the features dimension, while preserving the channels dimension
+    features = tf.reshape(x, (-1, tf.shape(x)[-1]))
+    # Compute the Gram matrix by multiplying the matrix by its transpose
+    # Note: 'features' matrix has shape [H*W, C]
+    # The transpose will have shape [C, H*W]
+    # The result will be a square matrix of shape [C, C] where C is the number of channels
+    gram = tf.matmul(features, features, transpose_a=True)
+    
     return gram
 
+def style_loss(style, combination, mask_path=None, content_mask_path=None, nb_channels=None):
+    assert tf.rank(style) == 3
+    assert tf.rank(combination) == 3
 
-# the "style loss" is designed to maintain
-# the style of the reference image in the generated image.
-# It is based on the gram matrices (which capture style) of
-# feature maps from the style reference image
-# and from the generated image
-def style_loss(style, combination, mask_path=None, nb_channels=None):
-    assert K.ndim(style) == 3
-    assert K.ndim(combination) == 3
-
+    # If there is a content mask path, load and apply the mask
     if content_mask_path is not None:
-        content_mask = K.variable(load_mask(content_mask_path, nb_channels))
-        combination = combination * K.stop_gradient(content_mask)
-        del content_mask
+        content_mask = load_mask(content_mask_path, (1, *style.shape), return_mask_img=True)
+        combination = combination * tf.stop_gradient(content_mask)
 
+    # If there is a mask path, load and apply the mask
     if mask_path is not None:
-        style_mask = K.variable(load_mask(mask_path, nb_channels))
-        style = style * K.stop_gradient(style_mask)
+        style_mask = load_mask(mask_path, (1, *style.shape), return_mask_img=True)
+        style = style * tf.stop_gradient(style_mask)
+        # If no content mask, apply style mask to combination
         if content_mask_path is None:
-            combination = combination * K.stop_gradient(style_mask)
-        del style_mask
+            combination = combination * tf.stop_gradient(style_mask)
 
+    # Compute the Gram matrices for the style and combination features
     S = gram_matrix(style)
     C = gram_matrix(combination)
-    channels = 3
-    size = img_width * img_height
-    return K.sum(K.square(S - C)) / (4. * (channels ** 2) * (size ** 2))
 
+    # Assume the number of channels is the last dimension of the style tensor
+    channels = int(style.shape[-1])
+    # Calculate the size as the product of the dimensions of the style feature map
+    size = int(style.shape[0]) * int(style.shape[1])
+    
+    # Compute the style loss
+    loss = tf.reduce_sum(tf.square(S - C)) / (4.0 * (channels ** 2) * (size ** 2))
+    return loss
 
-# an auxiliary loss function
-# designed to maintain the "content" of the
-# base image in the generated image
+import tensorflow as tf
+
 def content_loss(base, combination):
-    channel_dim = 0 if K.image_data_format() == "channels_first" else -1
+    # Determine the dimension ordering and set channel_dim accordingly
+    channel_dim = 0 if tf.keras.backend.image_data_format() == "channels_first" else -1
 
-    try:
-        channels = K.int_shape(base)[channel_dim]
-    except TypeError:
-        channels = K.shape(base)[channel_dim]
+    # Get the number of channels from the base image tensor shape
+    channels = base.shape[channel_dim]
     size = img_width * img_height
 
+    # Calculate the scaling multiplier based on content_loss_type
     if args.content_loss_type == 1:
         multiplier = 1. / (2. * (channels ** 0.5) * (size ** 0.5))
     elif args.content_loss_type == 2:
@@ -458,215 +463,164 @@ def content_loss(base, combination):
     else:
         multiplier = 1.
 
-    return multiplier * K.sum(K.square(combination - base))
+    # Compute the content loss as the scaled sum of squared differences
+    loss = multiplier * tf.reduce_sum(tf.square(combination - base))
+    return loss
 
+import tensorflow as tf
 
-# the 3rd loss function, total variation loss,
-# designed to keep the generated image locally coherent
 def total_variation_loss(x):
-    assert K.ndim(x) == 4
-    if K.image_data_format() == "channels_first":
-        a = K.square(x[:, :, :img_width - 1, :img_height - 1] - x[:, :, 1:, :img_height - 1])
-        b = K.square(x[:, :, :img_width - 1, :img_height - 1] - x[:, :, :img_width - 1, 1:])
+    assert tf.rank(x) == 4, "Input tensor must be 4-dimensional"
+    
+    if tf.keras.backend.image_data_format() == "channels_first":
+        # Calculate the difference for the height dimension
+        a = tf.square(x[:, :, :img_width - 1, :img_height - 1] - x[:, :, 1:, :img_height - 1])
+        # Calculate the difference for the width dimension
+        b = tf.square(x[:, :, :img_width - 1, :img_height - 1] - x[:, :, :img_width - 1, 1:])
     else:
-        a = K.square(x[:, :img_width - 1, :img_height - 1, :] - x[:, 1:, :img_height - 1, :])
-        b = K.square(x[:, :img_width - 1, :img_height - 1, :] - x[:, :img_width - 1, 1:, :])
-    return K.sum(K.pow(a + b, 1.25))
+        # Calculate the difference for the width dimension
+        a = tf.square(x[:, :img_width - 1, :img_height - 1, :] - x[:, 1:, :img_height - 1, :])
+        # Calculate the difference for the height dimension
+        b = tf.square(x[:, :img_width - 1, :img_height - 1, :] - x[:, :img_width - 1, 1:, :])
 
+    # Summing up the pixel-wise differences and raising to the power of 1.25
+    return tf.reduce_sum(tf.pow(a + b, 1.25))
+
+# Selection of feature layers to use for the style loss component
 if args.model == "vgg19":
-    feature_layers = ['conv1_1', 'conv1_2', 'conv2_1', 'conv2_2', 'conv3_1', 'conv3_2', 'conv3_3', 'conv3_4',
-                      'conv4_1', 'conv4_2', 'conv4_3', 'conv4_4', 'conv5_1', 'conv5_2', 'conv5_3', 'conv5_4']
-else:
-    feature_layers = ['conv1_1', 'conv1_2', 'conv2_1', 'conv2_2', 'conv3_1', 'conv3_2', 'conv3_3',
-                      'conv4_1', 'conv4_2', 'conv4_3', 'conv5_1', 'conv5_2', 'conv5_3']
+    feature_layers = [
+        'conv1_1', 'conv1_2', 'conv2_1', 'conv2_2', 'conv3_1', 'conv3_2', 'conv3_3', 'conv3_4',
+        'conv4_1', 'conv4_2', 'conv4_3', 'conv4_4', 'conv5_1', 'conv5_2', 'conv5_3', 'conv5_4'
+    ]
+else:  # Default to VGG16 feature layers
+    feature_layers = [
+        'conv1_1', 'conv1_2', 'conv2_1', 'conv2_2', 'conv3_1', 'conv3_2', 'conv3_3',
+        'conv4_1', 'conv4_2', 'conv4_3', 'conv5_1', 'conv5_2', 'conv5_3'
+    ]
 
-# combine these loss functions into a single scalar
-loss = K.variable(0.)
+# Assuming outputs_dict is a dictionary mapping layer names to their output tensors,
+# args.content_layer is the name of the content layer, and content_loss is defined.
+
+# Get the features of the base and combination images from the specified content layer
 layer_features = outputs_dict[args.content_layer]
 base_image_features = layer_features[0, :, :, :]
-combination_features = layer_features[nb_tensors - 1, :, :, :]
-loss = loss + content_weight * content_loss(base_image_features,
-                                      combination_features)
-# Improvement 2
-# Use all layers for style feature extraction and reconstruction
+combination_features = layer_features[-1, :, :, :]
+
+# Calculate the content loss
+content_loss_value = content_loss(base_image_features, combination_features)
+loss = tf.zeros(shape=())
+loss += content_weight * content_loss_value
+
+# Assuming 'feature_layers' is a list of layer names for which you want to compute style loss
 nb_layers = len(feature_layers) - 1
 
-style_masks = []
+# Prepare style masks
 if style_masks_present:
-    style_masks = mask_paths # If mask present, pass dictionary of masks to style loss
+    # If masks are provided, use them
+    style_masks = mask_paths
 else:
-    style_masks = [None for _ in range(nb_style_images)] # If masks not present, pass None to the style loss
+    # Otherwise, create a list of None values to indicate no masks
+    style_masks = [None for _ in range(nb_style_images)]
 
-channel_index = 1 if K.image_data_format() == "channels_first" else -1
+# Determine the channel index based on the image data format
+channel_index = 1 if tf.keras.backend.image_data_format() == "channels_first" else -1
 
-# Improvement 3 : Chained Inference without blurring
+import tensorflow as tf
+
+# Initialize the loss variable
+loss = tf.zeros(shape=())
+
+# Iterate through the layers to calculate the style loss
 for i in range(len(feature_layers) - 1):
+    # Get the features for the current layer
     layer_features = outputs_dict[feature_layers[i]]
-    shape = shape_dict[feature_layers[i]]
-    combination_features = layer_features[nb_tensors - 1, :, :, :]
-    style_reference_features = layer_features[1:nb_tensors - 1, :, :, :]
-    sl1 = []
-    for j in range(nb_style_images):
-        sl1.append(style_loss(style_reference_features[j], combination_features, style_masks[j], shape))
+    combination_features = layer_features[-1, :, :, :]
+    style_reference_features = layer_features[1:-1, :, :, :]
+    sl1 = [style_loss(style_feat, combination_features) for style_feat in style_reference_features]
 
-    layer_features = outputs_dict[feature_layers[i + 1]]
-    shape = shape_dict[feature_layers[i + 1]]
-    combination_features = layer_features[nb_tensors - 1, :, :, :]
-    style_reference_features = layer_features[1:nb_tensors - 1, :, :, :]
-    sl2 = []
-    for j in range(nb_style_images):
-        sl2.append(style_loss(style_reference_features[j], combination_features, style_masks[j], shape))
+    # Get the features for the next layer
+    next_layer_features = outputs_dict[feature_layers[i + 1]]
+    combination_features_next = next_layer_features[-1, :, :, :]
+    style_reference_features_next = next_layer_features[1:-1, :, :, :]
+    sl2 = [style_loss(style_feat, combination_features_next) for style_feat in style_reference_features_next]
 
+    # Calculate the style loss for each style image and add it to the total loss
     for j in range(nb_style_images):
+        # Difference between the style losses of layer i and layer i+1
         sl = sl1[j] - sl2[j]
+        
+        # Apply geometric weighting to the style loss
+        weighted_sl = (style_weights[j] / (2 ** (nb_layers - (i + 1)))) * sl
+        loss += weighted_sl
 
-        # Improvement 4
-        # Geometric weighted scaling of style loss
-        loss = loss + (style_weights[j] / (2 ** (nb_layers - (i + 1)))) * sl
+# Add total variation loss to the total loss
+loss += total_variation_weight * total_variation_loss(combination_image)
 
-loss = loss + total_variation_weight * total_variation_loss(combination_image)
+# Assuming 'initial_value' is a preprocessed image tensor suitable for the model input
 
-# get the gradients of the generated image wrt the loss
-# First, make sure that the input to the model is a tf.Variable
-# This is necessary for TensorFlow to track changes and compute gradients
+# Convert the initial image to a tf.Variable which will be trainable by the optimizer
 combination_image = tf.Variable(initial_value, dtype=tf.float32)
 
+# Set up the GradientTape context to watch the trainable tf.Variable
 with tf.GradientTape() as tape:
-    # Now 'combination_image' is a tf.Variable, so it's being watched automatically
-    # The rest of your model code that computes the 'current_loss' goes here
-    current_loss = loss  # Here, loss is assumed to be a callable that returns the tensor to compute the gradient towards
+    # Run the model and compute the current loss
+    # It is assumed that the 'loss' computation has been defined elsewhere in the code
+    current_loss = loss(combination_image)
 
-# Compute the gradients of 'current_loss' with respect to 'combination_image'
+# Compute the gradients of the loss with respect to the combination image
 grads = tape.gradient(current_loss, combination_image)
 
+# Apply the gradients to the combination image using an optimizer
+# Assuming an optimizer has been defined, e.g., Adam
+optimizer = tf.optimizers.Adam(learning_rate=5.0)
+optimizer.apply_gradients([(grads, combination_image)])
+
+def eval_loss_and_grads(combination_image):
+    with tf.GradientTape() as tape:
+        # Compute the loss
+        current_loss = loss(combination_image)
+        
+    # Compute the gradients
+    grads = tape.gradient(current_loss, combination_image)
+    # Flatten the gradients to be compatible with scipy.optimize
+    grad_values = grads.numpy().flatten().astype('float64')
+    return current_loss.numpy().astype('float64'), grad_values
 
 
-outputs = [loss]
-if type(grads) in {list, tuple}:
-    outputs += grads
-else:
-    outputs.append(grads)
 
-f_outputs = K.function([combination_image], outputs)
-
-
-def eval_loss_and_grads(x):
-    if K.image_data_format() == "channels_first":
-        x = x.reshape((1, 3, img_width, img_height))
-    else:
-        x = x.reshape((1, img_width, img_height, 3))
-    outs = f_outputs([x])
-    loss_value = outs[0]
-    if len(outs[1:]) == 1:
-        grad_values = outs[1].flatten().astype('float64')
-    else:
-        grad_values = np.array(outs[1:]).flatten().astype('float64')
-    return loss_value, grad_values
-
-
-# this Evaluator class makes it possible
-# to compute loss and gradients in one pass
-# while retrieving them via two separate functions,
-# "loss" and "grads". This is done because scipy.optimize
-# requires separate functions for loss and gradients,
-# but computing them separately would be inefficient.
-class Evaluator(object):
-    def __init__(self, model):
-        self.model = model
-        self.loss_value = None
-        self.grads_values = None
-
-    def loss(self, x):
-        assert self.loss_value is None
-        with tf.GradientTape() as tape:
-            x = tf.convert_to_tensor(x.reshape((1, img_width, img_height, 3)))
-            tape.watch(x)
-            self.loss_value = compute_loss(x, self.model)
-        self.grad_values = tape.gradient(self.loss_value, x)
-        return self.loss_value.numpy().astype('float64')
-
-    def grads(self, _):
-        assert self.loss_value is not None
-        grad_values = self.grad_values.numpy().flatten().astype('float64')
+class Evaluator(tf.Module):
+    def __init__(self, compute_loss):
+        super(Evaluator, self).__init__()
+        self.compute_loss = compute_loss
         self.loss_value = None
         self.grad_values = None
-        return grad_values
 
-evaluator = Evaluator(model)
+    def __call__(self, x):
+        with tf.GradientTape() as tape:
+            # Update the image
+            x = tf.convert_to_tensor(x.reshape((1, img_width, img_height, 3)), dtype=tf.float32)
+            # Watch the input image
+            tape.watch(x)
+            # Compute the loss
+            loss_value = self.compute_loss(x)
+        # Compute the gradients
+        grad_values = tape.gradient(loss_value, x)
+        # Store the values
+        self.loss_value = loss_value.numpy().astype('float64')
+        self.grad_values = grad_values.numpy().flatten().astype('float64')
+        return self.loss_value
 
-# run scipy-based optimization (L-BFGS) over the pixels of the generated image
-# so as to minimize the neural style loss
+    @property
+    def grads(self):
+        return self.grad_values
 
+# Assume 'compute_loss' is a function that computes the loss given an image
+evaluator = Evaluator(compute_loss)
 
-if "content" in args.init_image or "gray" in args.init_image:
-    x = preprocess_image(base_image_path, True, read_mode=read_mode)
-elif "noise" in args.init_image:
-    x = np.random.uniform(0, 255, (1, img_width, img_height, 3)) - 128.
-
-    if K.image_data_format() == "channels_first":
-        x = x.transpose((0, 3, 1, 2))
-else:
-    print("Using initial image : ", args.init_image)
-    x = preprocess_image(args.init_image, read_mode=read_mode)
-
-# We require original image if we are to preserve color in YCbCr mode
-if preserve_color:
-    content = imread(base_image_path, mode="YCbCr")
-    content = imresize(content, (img_width, img_height))
-
-    if color_mask_present:
-        if K.image_data_format() == "channels_first":
-            color_mask_shape = (None, None, img_width, img_height)
-        else:
-            color_mask_shape = (None, img_width, img_height, None)
-
-        color_mask = load_mask(args.color_mask, color_mask_shape, return_mask_img=True)
-    else:
-        color_mask = None
-else:
-    color_mask = None
-
-num_iter = args.num_iter
-prev_min_val = -1
-
-improvement_threshold = float(args.min_improvement)
-
+# Optimization loop
 for i in range(num_iter):
-    print("Starting iteration %d of %d" % ((i + 1), num_iter))
+    print(f"Starting iteration {i + 1} of {num_iter}")
     start_time = time.time()
 
-    x, min_val, info = fmin_l_bfgs_b(evaluator.loss, x.flatten(), fprime=evaluator.grads, maxfun=20)
-
-    if prev_min_val == -1:
-        prev_min_val = min_val
-
-    improvement = (prev_min_val - min_val) / prev_min_val * 100
-
-    print("Current loss value:", min_val, " Improvement : %0.3f" % improvement, "%")
-    prev_min_val = min_val
-    # save current generated image
-    img = deprocess_image(x.copy())
-
-    if preserve_color and content is not None:
-        img = original_color_transform(content, img, mask=color_mask)
-
-    if not rescale_image:
-        img_ht = int(img_width * aspect_ratio)
-        print("Rescaling Image to (%d, %d)" % (img_width, img_ht))
-        img = imresize(img, (img_width, img_ht), interp=args.rescale_method)
-
-    if rescale_image:
-        print("Rescaling Image to (%d, %d)" % (img_WIDTH, img_HEIGHT))
-        img = imresize(img, (img_WIDTH, img_HEIGHT), interp=args.rescale_method)
-
-    fname = result_prefix + "_at_iteration_%d.png" % (i + 1)
-    imsave(fname, img)
-    end_time = time.time()
-    print("Image saved as", fname)
-    print("Iteration %d completed in %ds" % (i + 1, end_time - start_time))
-
-    if improvement_threshold is not 0.0:
-        if improvement < improvement_threshold and improvement is not 0.0:
-            print("Improvement (%f) is less than improvement threshold (%f). Early stopping script." %
-                  (improvement, improvement_threshold))
-            exit()
+    # Run the L-BFGS optimizer
+    x, min_val, info = fmin_l_bfgs_b(evaluator, x.flatten(), fprime=evaluator.grads, maxfun=20)
