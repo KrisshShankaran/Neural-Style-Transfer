@@ -336,10 +336,7 @@ style_reference_images = [preprocess_image(style_path) for style_path in style_i
 combination_image = tf.Variable(tf.random.uniform(shape=base_image.shape, dtype=tf.float32))
 
 # Combine the images into a single tensor
-image_tensors = tf.stack([base_image] + style_reference_images + [combination_image])
-
-# Reshape the input tensor to remove the extra dimension
-image_tensors = tf.squeeze(image_tensors, axis=0)
+image_tensors = tf.concat([base_image] + style_reference_images + [combination_image], axis=0)
 
 # Create an input layer with the combined images tensor
 input_layer = tf.keras.layers.Input(tensor=image_tensors)
