@@ -56,7 +56,6 @@ parser.add_argument("--content_mask", type=str, default=None,
 parser.add_argument("--color_mask", type=str, default=None,
                     help='Mask for color preservation')
 
-
 parser.add_argument("--image_size", dest="img_size", default=400, type=int,
                     help='Minimum image size')
 
@@ -135,11 +134,6 @@ color_mask_present = args.color_mask is not None
 
 # Parse the arguments
 args = parser.parse_args()
-
-class Args:
-    model = 'vgg16'  # or 'vgg19'
-
-args = Args()
 
 # Now you can safely use args to load the model
 model = VGG16(include_top=False) if args.model == "vgg16" else VGG19(include_top=False)
