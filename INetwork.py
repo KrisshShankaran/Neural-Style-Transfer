@@ -109,6 +109,9 @@ parser.add_argument('--min_improvement', default=0.0, type=float,
 # Parse the arguments
 args = parser.parse_args()
 
+def str_to_bool(v):
+    return v.lower() in ("true", "yes", "t", "1")
+  
 # Process the arguments
 base_image_path = args.base_image_path
 style_reference_image_paths = args.style_image_paths
