@@ -483,8 +483,8 @@ else:  # Default to VGG16 feature layers
         'conv4_1', 'conv4_2', 'conv4_3', 'conv5_1', 'conv5_2', 'conv5_3'
     ]
 
-# Assuming outputs_dict is a dictionary mapping layer names to their output tensors,
-# args.content_layer is the name of the content layer, and content_loss is defined.
+# Assuming 'feature_layers' is a list of layer names for which you want to compute style loss
+outputs_dict = dict([(layer.name, layer.output) for layer in model.layers])
 
 # Get the features of the base and combination images from the specified content layer
 layer_features = outputs_dict[args.content_layer]
