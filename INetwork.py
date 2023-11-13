@@ -36,7 +36,7 @@ Contains few improvements suggested in the paper Improving the Neural Algorithm 
 -----------------------------------------------------------------------------------------------------------------------
 """
 
-parser = argparse.ArgumentParser(description='Neural style transfer with Keras.')
+parser = argparse.ArgumentParser(description='Neural style transfer.')
 parser.add_argument('base_image_path', metavar='base', type=str,
                     help='Path to the image to transform.')
 
@@ -103,27 +103,6 @@ parser.add_argument('--preserve_color', dest='color', default="False", type=str,
 parser.add_argument('--min_improvement', default=0.0, type=float,
                     help='Defines minimum improvement required to continue script')
 
-
-
-import argparse
-
-def str_to_bool(v):
-    return v.lower() in ("true", "yes", "t", "1")
-
-# Define the parser and add the arguments
-parser = argparse.ArgumentParser(description='Neural style transfer with Keras.')
-parser.add_argument('base_image_path', metavar='base', type=str,
-                    help='Path to the image to transform.')
-parser.add_argument('style_image_paths', metavar='ref', nargs='+', type=str,
-                    help='Path to the style reference image.')
-parser.add_argument('result_prefix', metavar='res_prefix', type=str,
-                    help='Prefix for the saved results.')
-parser.add_argument("--style_masks", type=str, default=None, nargs='+',
-                    help='Masks for style images')
-parser.add_argument("--content_mask", type=str, default=None,
-                    help='Masks for the content image')
-parser.add_argument("--color_mask", type=str, default=None,
-                    help='Mask for color preservation')
 
 # Parse the arguments
 args = parser.parse_args()
