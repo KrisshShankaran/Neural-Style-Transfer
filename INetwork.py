@@ -211,7 +211,7 @@ def preprocess_image(image_path, load_dims=False, read_mode="color"):
     img = tf.expand_dims(img, axis=0)
 
     # If using 'channels_first', transpose the image
-    if K.image_data_format() == "channels_first":
+    if tf.keras.backend.image_data_format() == "channels_first":
         img = tf.transpose(img, (0, 3, 1, 2))
 
     return img
