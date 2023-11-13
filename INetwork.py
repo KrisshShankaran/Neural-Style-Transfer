@@ -36,15 +36,6 @@ Contains few improvements suggested in the paper Improving the Neural Algorithm 
 -----------------------------------------------------------------------------------------------------------------------
 """
 
-# Load the VGG model with the input layer
-if args.model == "vgg19":
-    # Load VGG19
-    vgg = VGG19(include_top=False, weights='imagenet', input_tensor=input_layer)
-else:
-    # Load VGG16 by default
-    vgg = VGG16(include_top=False, weights='imagenet', input_tensor=input_layer)
-
-
 parser = argparse.ArgumentParser(description='Neural style transfer.')
 parser.add_argument('base_image_path', metavar='base', type=str,
                     help='Path to the image to transform.')
@@ -119,7 +110,15 @@ args = parser.parse_args()
 
 def str_to_bool(v):
     return v.lower() in ("true", "yes", "t", "1")
-  
+
+# Load the VGG model with the input layer
+if args.model == "vgg19":
+    # Load VGG19
+    vgg = VGG19(include_top=False, weights='imagenet', input_tensor=input_layer)
+else:
+    # Load VGG16 by default
+    vgg = VGG16(include_top=False, weights='imagenet', input_tensor=input_layer)
+    
 # Process the arguments
 base_image_path = args.base_image_path
 style_reference_image_paths = args.style_image_paths
