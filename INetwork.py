@@ -342,10 +342,7 @@ image_tensors = tf.stack([base_image] + style_reference_images + [combination_im
 input_layer = tf.keras.layers.Input(tensor=image_tensors)
 
 # Load the VGG model with the input layer
-if args.model == "vgg19":
-    # Load VGG19
-    vgg = VGG19(include_top=False, weights='imagenet', input_tensor=input_layer)
-else:
+if args.model == "vgg16":
     # Load VGG16 by default
     vgg = VGG16(include_top=False, weights='imagenet', input_tensor=input_layer)
 
