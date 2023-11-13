@@ -40,7 +40,7 @@ parser = argparse.ArgumentParser(description='Neural style transfer.')
 parser.add_argument('base_image_path', metavar='base', type=str,
                     help='Path to the image to transform.')
 
-parser.add_argument('syle_image_paths', metavar='ref', nargs='+', type=str,
+parser.add_argument('style_image_paths', metavar='ref', nargs='+', type=str,
                     help='Path to the style reference image.')
 
 parser.add_argument('result_prefix', metavar='res_prefix', type=str,
