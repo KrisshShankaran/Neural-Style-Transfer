@@ -36,6 +36,15 @@ Contains few improvements suggested in the paper Improving the Neural Algorithm 
 -----------------------------------------------------------------------------------------------------------------------
 """
 
+# Load the VGG model with the input layer
+if args.model == "vgg19":
+    # Load VGG19
+    vgg = VGG19(include_top=False, weights='imagenet', input_tensor=input_layer)
+else:
+    # Load VGG16 by default
+    vgg = VGG16(include_top=False, weights='imagenet', input_tensor=input_layer)
+
+
 parser = argparse.ArgumentParser(description='Neural style transfer.')
 parser.add_argument('base_image_path', metavar='base', type=str,
                     help='Path to the image to transform.')
@@ -340,11 +349,6 @@ image_tensors = tf.stack([base_image] + style_reference_images + [combination_im
 
 # Create an input layer with the combined images tensor
 input_layer = tf.keras.layers.Input(tensor=image_tensors)
-
-# Load the VGG model with the input layer
-if args.model == "vgg16":
-    # Load VGG16 by default
-    vgg = VGG16(include_top=False, weights='imagenet', input_tensor=input_layer)
 
 # If you need to access the model's intermediate layers, you can do so as follows:
 # x = vgg.get_layer('block5_conv3').output
