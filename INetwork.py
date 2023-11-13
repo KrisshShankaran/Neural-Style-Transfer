@@ -46,6 +46,7 @@ parser.add_argument('syle_image_paths', metavar='ref', nargs='+', type=str,
 parser.add_argument('result_prefix', metavar='res_prefix', type=str,
                     help='Prefix for the saved results.')
 
+'''
 parser.add_argument("--style_masks", type=str, default=None, nargs='+',
                     help='Masks for style images')
 
@@ -54,6 +55,7 @@ parser.add_argument("--content_mask", type=str, default=None,
 
 parser.add_argument("--color_mask", type=str, default=None,
                     help='Mask for color preservation')
+'''
 
 parser.add_argument("--image_size", dest="img_size", default=400, type=int,
                     help='Minimum image size')
