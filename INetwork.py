@@ -374,6 +374,9 @@ else:
 # Print a message indicating that the model was successfully loaded
 print('Model loaded with pre-trained ImageNet weights.')
 
+# Assuming 'feature_layers' is a list of layer names for which you want to compute style loss
+outputs_dict = dict([(layer.name, layer.output) for layer in model.layers])
+
 layer_output = outputs_dict['layer_name']
 layer_shape = shape_dict['layer_name']
 
@@ -483,8 +486,6 @@ else:  # Default to VGG16 feature layers
         'conv4_1', 'conv4_2', 'conv4_3', 'conv5_1', 'conv5_2', 'conv5_3'
     ]
 
-# Assuming 'feature_layers' is a list of layer names for which you want to compute style loss
-outputs_dict = dict([(layer.name, layer.output) for layer in model.layers])
 
 # Get the features of the base and combination images from the specified content layer
 layer_features = outputs_dict[args.content_layer]
